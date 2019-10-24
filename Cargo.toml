@@ -12,3 +12,4 @@ dashmap = { git = "https://github.com/Arnaz87/dashmap" }
 crossbeam = "0.7"
 arc-swap = "0.4"
 evmap = "7.1"
+number_prefix = "0.3"

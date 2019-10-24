@@ -54,7 +54,7 @@ trait Mappy <'a>: Send + Sync {
 }
 
 trait MappyReader<'a>: Send {
-    fn get <F: FnOnce(&Foo)> (&self, i: usize, f: F);
+    fn map <F: FnOnce(&Foo)> (&self, i: usize, f: F);
 }
 
 //        parking_lot
@@ -82,7 +82,7 @@ impl <'a> Mappy<'a> for MyPLLock {
     fn name () -> &'static str { "parking_lot::RwLock<HashMap>" }
 }
 impl <'a> MappyReader<'a> for &MyPLLock {
-    fn get <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.read().get(&i).map(f);
     }
 }
@@ -104,7 +104,7 @@ impl <'a> Mappy<'a> for MyRwLock {
         ))
     }
 
-    /*fn get <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    /*fn map <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.read().map(|lock| lock.get(&i).map(f));
     }*/
 
@@ -117,7 +117,7 @@ impl <'a> Mappy<'a> for MyRwLock {
     fn name () -> &'static str { "std::sync::RwLock<HashMap>" }
 }
 impl <'a> MappyReader<'a> for &MyRwLock {
-    fn get <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.read().map(|lock| lock.get(&i).map(f));
     }
 }
@@ -150,7 +150,7 @@ impl <'a> Mappy<'a> for MyArcSwap {
     fn name () -> &'static str { "ArcSwap<HashMap>" }
 }
 impl <'a> MappyReader<'a> for &MyArcSwap {
-    fn get <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.load().get(&i).map(f);
     }
 }
@@ -181,7 +181,7 @@ impl <'a> Mappy<'a> for MyDashMap {
     fn name () -> &'static str { "DashMap" }
 }
 impl <'a> MappyReader<'a> for &MyDashMap {
-    fn get <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.get(&i).map(|guard| f(&guard));
     }
 }
@@ -221,7 +221,7 @@ impl <'a> Mappy<'a> for MyEvmap {
 }
 struct MyEvmapReader (ReadHandle<usize, Box<Foo>>);
 impl <'a> MappyReader<'a> for MyEvmapReader {
-    fn get <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.get_and(&i, |arr| {
             f(arr[0].as_ref())
         });
@@ -230,6 +230,15 @@ impl <'a> MappyReader<'a> for MyEvmapReader {
 
 //         benchmark
 //===========================
+
+fn format (n: usize) -> String {
+    use number_prefix::{NumberPrefix, Standalone, Prefixed};
+    
+    match NumberPrefix::decimal(n as f64) {
+        Standalone(n)   => format!("{}", n),
+        Prefixed(prefix, n) => format!("{:.0} {}", n, prefix),
+    }
+}
 
 
 fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
@@ -253,7 +262,7 @@ fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
                     let mut i = (thread_i*MAP_SIZE) / THREADS;
 
                     while (Instant::now() < end) {
-                        reader.get(i, |foo| {
+                        reader.map(i, |foo| {
                             test::black_box(foo);
                         });
 
@@ -279,10 +288,10 @@ fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
             }
         });
 
-        let read_count = read_count.load(Relaxed) / 1000;
-        let write_count = write_count.load(Relaxed) / 1000;
+        let read_count = format(read_count.load(Relaxed));
+        let write_count = format(write_count.load(Relaxed));
 
-        println!("{}\n\t{}K reads, {}K writes", Map::name(), read_count, write_count);
+        println!("{}\n\t{} reads, {} writes", Map::name(), read_count, write_count);
     })
 }
 
