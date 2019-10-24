@@ -279,7 +279,10 @@ fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
             }
         });
 
-        println!("{}: {} reads, {} writes", Map::name(), read_count.load(Relaxed), write_count.load(Relaxed));
+        let read_count = read_count.load(Relaxed) / 1000;
+        let write_count = write_count.load(Relaxed) / 1000;
+
+        println!("{}\n\t{}K reads, {}K writes", Map::name(), read_count, write_count);
     })
 }
 
@@ -294,6 +297,8 @@ fn main() {
         bench::<MyEvmap>(),
         bench::<MyDashMap>(),
     ];
+
+    println!("Running {} read threads and {} write threads", THREADS, if BENCH_WRITES { 1 } else { 0 });
 
     // Wait for the threads to finish
     for join in joins { join.join(); }
