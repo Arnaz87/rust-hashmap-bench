@@ -1,0 +1,14 @@
+[package]
+name = "hashmap-benchmark"
+version = "0.1.0"
+authors = ["Arnaud Castellanos Galea <poderosoarnaud@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+parking_lot = { version = "0.9", features = ["nightly"] }
+dashmap = { git = "https://github.com/Arnaz87/dashmap" }
+crossbeam = "0.7"
+arc-swap = "0.4"
+evmap = "7.1"
