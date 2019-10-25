@@ -7,8 +7,7 @@ extern crate test;
 use std::time::{Instant, Duration};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering::Relaxed};
-use std::sync::{Arc, RwLock};
-use std::cell::RefCell;
+use std::sync::{Arc, RwLock, Mutex};
 
 use parking_lot::RwLock as PLLock;
 use crossbeam::thread;
@@ -16,9 +15,9 @@ use arc_swap::ArcSwap;
 use evmap::{ReadHandle, ReadHandleFactory, WriteHandle};
 use dashmap::DashMap;
 
-const THREADS: usize = 5;
+const READ_THREADS: usize = 4;
+const WRITE_THREADS: usize = 4;
 const MAP_SIZE: usize = 10000;
-const BENCH_WRITES: bool = false;
 
 const DURATION: Duration = Duration::from_secs(3);
 
@@ -191,7 +190,7 @@ impl <'a> MappyReader<'a> for &MyDashMap {
 
 struct MyEvmap {
     factory: ReadHandleFactory<usize, Box<Foo>>,
-    writer: RefCell<WriteHandle<usize, Box<Foo>>>,
+    writer: Mutex<WriteHandle<usize, Box<Foo>>>,
 }
 unsafe impl Send for MyEvmap {}
 unsafe impl Sync for MyEvmap {}
@@ -206,11 +205,11 @@ impl <'a> Mappy<'a> for MyEvmap {
             })
         );
         writer.refresh();
-        Self { factory: reader.factory(), writer: RefCell::new(writer) }
+        Self { factory: reader.factory(), writer: Mutex::new(writer) }
     }
 
     fn set (&self, i: usize, foo: Foo) {
-        let mut writer = self.writer.borrow_mut();
+        let mut writer = self.writer.lock().unwrap();
         writer.update(i, Box::new(foo));
         writer.refresh();
     }
@@ -261,11 +260,11 @@ fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
                 stop.store(true, Relaxed);
             });
 
-            for thread_i in 0..THREADS {
+            for thread_i in 0..READ_THREADS {
 
                 let reader = map.reader();
                 scope.spawn(move |_| {
-                    let mut i = (thread_i*MAP_SIZE) / THREADS;
+                    let mut i = (thread_i*MAP_SIZE) / READ_THREADS;
 
                     while (!stop.load(Relaxed)) {
                         reader.map(i, |foo| {
@@ -279,9 +278,9 @@ fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
                 });
             }
 
-            if BENCH_WRITES {
+            for thread_i in 0..WRITE_THREADS {
                 scope.spawn(move |_| {
-                    let mut i = 0;
+                    let mut i = (thread_i*MAP_SIZE) / WRITE_THREADS;
 
                     while (!stop.load(Relaxed)) {
                         map.set(i, Foo::new(i));
@@ -305,7 +304,7 @@ fn main() {
     let start = Instant::now();
     let end = start + DURATION;
 
-    println!("Running {} read threads and {} write threads", THREADS, if BENCH_WRITES { 1 } else { 0 });
+    println!("Running {} read threads and {} write threads", READ_THREADS, WRITE_THREADS);
 
     //let joins = vec![
         bench::<MyPLLock>().join();
