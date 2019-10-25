@@ -16,9 +16,9 @@ use evmap::{ReadHandle, ReadHandleFactory, WriteHandle};
 use parking_lot::Mutex as PLMutex;
 use parking_lot::RwLock as PLLock;
 
-const THREADS: usize = 5;
+const READ_THREADS: usize = 4;
+const WRITE_THREADS: usize = 4;
 const MAP_SIZE: usize = 10000;
-const BENCH_WRITES: bool = false;
 
 const DURATION: Duration = Duration::from_secs(3);
 
@@ -280,7 +280,7 @@ impl<'a> MappyReader<'a> for &MyDashMap {
 
 struct MyEvmap {
     factory: ReadHandleFactory<usize, Box<Foo>>,
-    writer: RefCell<WriteHandle<usize, Box<Foo>>>,
+    writer: Mutex<WriteHandle<usize, Box<Foo>>>,
 }
 unsafe impl Send for MyEvmap {}
 unsafe impl Sync for MyEvmap {}
@@ -293,12 +293,12 @@ impl<'a> Mappy<'a> for MyEvmap {
         writer.refresh();
         Self {
             factory: reader.factory(),
-            writer: RefCell::new(writer),
+            writer: Mutex::new(writer),
         }
     }
 
     fn set(&self, i: usize, foo: Foo) {
-        let mut writer = self.writer.borrow_mut();
+        let mut writer = self.writer.lock().unwrap();
         writer.update(i, Box::new(foo));
         writer.refresh();
     }
@@ -356,10 +356,10 @@ where
                 stop.store(true, Relaxed);
             });
 
-            for thread_i in 0..THREADS {
+            for thread_i in 0..READ_THREADS {
                 let reader = map.reader();
                 scope.spawn(move |_| {
-                    let mut i = (thread_i * MAP_SIZE) / THREADS;
+                    let mut i = (thread_i*MAP_SIZE) / READ_THREADS;
 
                     while (!stop.load(Relaxed)) {
                         reader.map(i, |foo| {
@@ -375,9 +375,9 @@ where
                 });
             }
 
-            if BENCH_WRITES {
+            for thread_i in 0..WRITE_THREADS {
                 scope.spawn(move |_| {
-                    let mut i = 0;
+                    let mut i = (thread_i*MAP_SIZE) / WRITE_THREADS;
 
                     while (!stop.load(Relaxed)) {
                         map.set(i, Foo::new(i));
@@ -410,8 +410,8 @@ fn main() {
 
     println!(
         "Running {} read threads and {} write threads",
-        THREADS,
-        if BENCH_WRITES { 1 } else { 0 }
+        READ_THREADS,
+        WRITE_THREADS
     );
 
     bench::<MyPLLock>().join();
