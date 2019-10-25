@@ -21,7 +21,7 @@ const WRITE_THREADS: usize = 1;
 const MAP_SIZE: usize = 10000;
 
 const DURATION: Duration = Duration::from_secs(5);
-const WRITE_SLEEP: Option<Duration> = Some(Duration::from_secs(1));
+const WRITE_SLEEP: Option<Duration> = None;//Some(Duration::from_secs(1));
 
 enum ReadType { One, Iter }
 const READ_TYPE: ReadType = ReadType::Iter;
@@ -455,14 +455,14 @@ fn main() {
     };
 
     println!(
-        "Running {} read threads and {} write threads{}",
+        "Running {} read threads and {} write threads",
         READ_THREADS,
         WRITE_THREADS,
-        match WRITE_SLEEP {
-            Some(dur) => format!(", writers sleep for {:?}", dur),
-            None => "".to_string()
-        },
     );
+
+    if let Some(dur) = WRITE_SLEEP {
+        println!("Writers sleep for {:?}", dur);
+    }
 
     bench::<MyPLLock>().join();
     bench::<MyRwLock>().join();
