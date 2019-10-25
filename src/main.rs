@@ -16,11 +16,15 @@ use evmap::{ReadHandle, ReadHandleFactory, WriteHandle};
 use parking_lot::Mutex as PLMutex;
 use parking_lot::RwLock as PLLock;
 
-const READ_THREADS: usize = 4;
-const WRITE_THREADS: usize = 4;
+const READ_THREADS: usize = 10;
+const WRITE_THREADS: usize = 1;
 const MAP_SIZE: usize = 10000;
 
-const DURATION: Duration = Duration::from_secs(3);
+const DURATION: Duration = Duration::from_secs(5);
+const WRITE_SLEEP: Option<Duration> = Some(Duration::from_secs(1));
+
+enum ReadType { One, Iter }
+const READ_TYPE: ReadType = ReadType::Iter;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct Foo {
@@ -54,7 +58,8 @@ trait Mappy<'a>: Send + Sync {
 }
 
 trait MappyReader<'a>: Send {
-    fn map<F: FnOnce(&Foo)>(&self, i: usize, f: F);
+    fn map_one<F: FnOnce(&Foo)>(&self, i: usize, f: F);
+    fn map_iter<F: Fn(&Foo)>(&self, f: F);
 }
 
 //        parking_lot
@@ -87,8 +92,12 @@ impl<'a> Mappy<'a> for MyPLLock {
     }
 }
 impl<'a> MappyReader<'a> for &MyPLLock {
-    fn map<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map_one<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.read().get(&i).map(f);
+    }
+
+    fn map_iter<F: Fn(&Foo)>(&self, f: F) {
+        self.0.read().iter().for_each(|(_k, v)| f(v));
     }
 }
 
@@ -119,8 +128,12 @@ impl<'a> Mappy<'a> for MyPLMutex {
     }
 }
 impl<'a> MappyReader<'a> for &MyPLMutex {
-    fn map<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map_one<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.lock().get(&i).map(f);
+    }
+
+    fn map_iter<F: Fn(&Foo)>(&self, f: F) {
+        self.0.lock().iter().for_each(|(_k, v)| f(v));
     }
 }
 
@@ -142,10 +155,6 @@ impl<'a> Mappy<'a> for MyRwLock {
         ))
     }
 
-    /*fn map <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
-        self.0.read().map(|lock| lock.get(&i).map(f));
-    }*/
-
     fn set(&self, i: usize, foo: Foo) {
         self.0.write().map(|mut lock| lock.insert(i, foo));
     }
@@ -159,8 +168,12 @@ impl<'a> Mappy<'a> for MyRwLock {
     }
 }
 impl<'a> MappyReader<'a> for &MyRwLock {
-    fn map<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map_one<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.read().map(|lock| lock.get(&i).map(f));
+    }
+
+    fn map_iter<F: Fn(&Foo)>(&self, f: F) {
+        self.0.read().unwrap().iter().for_each(|(_k, v)| f(v));
     }
 }
 
@@ -179,10 +192,6 @@ impl<'a> Mappy<'a> for MyMutex {
         ))
     }
 
-    /*fn map <F: FnOnce(&Foo)>(&self, i: usize, f: F) {
-        self.0.read().map(|lock| lock.get(&i).map(f));
-    }*/
-
     fn set(&self, i: usize, foo: Foo) {
         self.0.lock().map(|mut lock| lock.insert(i, foo));
     }
@@ -196,8 +205,12 @@ impl<'a> Mappy<'a> for MyMutex {
     }
 }
 impl<'a> MappyReader<'a> for &MyMutex {
-    fn map<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map_one<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.lock().map(|lock| lock.get(&i).map(f));
+    }
+
+    fn map_iter<F: Fn(&Foo)>(&self, f: F) {
+        self.0.lock().unwrap().iter().for_each(|(_k, v)| f(v));
     }
 }
 
@@ -234,8 +247,12 @@ impl<'a> Mappy<'a> for MyArcSwap {
     }
 }
 impl<'a> MappyReader<'a> for &MyArcSwap {
-    fn map<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map_one<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.load().get(&i).map(f);
+    }
+
+    fn map_iter<F: Fn(&Foo)>(&self, f: F) {
+        self.0.load().iter().for_each(|(_k, v)| f(v));
     }
 }
 
@@ -270,8 +287,12 @@ impl<'a> Mappy<'a> for MyDashMap {
     }
 }
 impl<'a> MappyReader<'a> for &MyDashMap {
-    fn map<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map_one<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.get(&i).map(|guard| f(&guard));
+    }
+
+    fn map_iter<F: Fn(&Foo)>(&self, f: F) {
+        self.0.iter().for_each(|entry| f(&entry));
     }
 }
 
@@ -313,8 +334,12 @@ impl<'a> Mappy<'a> for MyEvmap {
 }
 struct MyEvmapReader(ReadHandle<usize, Box<Foo>>);
 impl<'a> MappyReader<'a> for MyEvmapReader {
-    fn map<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
+    fn map_one<F: FnOnce(&Foo)>(&self, i: usize, f: F) {
         self.0.get_and(&i, |arr| f(arr[0].as_ref()));
+    }
+
+    fn map_iter<F: Fn(&Foo)>(&self, f: F) {
+        self.0.for_each(|_k, v| f(v[0].as_ref()));
     }
 }
 
@@ -359,17 +384,29 @@ where
             for thread_i in 0..READ_THREADS {
                 let reader = map.reader();
                 scope.spawn(move |_| {
-                    let mut i = (thread_i*MAP_SIZE) / READ_THREADS;
+                    match READ_TYPE {
+                        ReadType::One => {
+                            let mut i = (thread_i*MAP_SIZE) / READ_THREADS;
 
-                    while (!stop.load(Relaxed)) {
-                        reader.map(i, |foo| {
-                            test::black_box(foo);
-                        });
+                            while (!stop.load(Relaxed)) {
+                                reader.map_one(i, |foo| {
+                                    test::black_box(foo);
+                                    read_count.fetch_add(1, Relaxed);
+                                });
 
-                        read_count.fetch_add(1, Relaxed);
-                        i += 1;
-                        if (i >= MAP_SIZE) {
-                            i = 0;
+                                i += 1;
+                                if (i >= MAP_SIZE) {
+                                    i = 0;
+                                }
+                            }
+                        },
+                        ReadType::Iter => {
+                            while (!stop.load(Relaxed)) {
+                                reader.map_iter(move |foo| {
+                                    test::black_box(foo);
+                                    read_count.fetch_add(1, Relaxed);
+                                });
+                            }
                         }
                     }
                 });
@@ -387,6 +424,10 @@ where
                         if (i >= MAP_SIZE) {
                             i = 0;
                         }
+
+                        if let Some(dur) = WRITE_SLEEP {
+                            std::thread::sleep(dur);
+                        }
                     }
                 });
             }
@@ -399,7 +440,7 @@ where
             "{}\n\t{} reads, {} writes",
             Map::name(),
             read_count,
-            write_count
+            write_count,
         );
     })
 }
@@ -408,10 +449,19 @@ fn main() {
     let start = Instant::now();
     let end = start + DURATION;
 
+    match READ_TYPE {
+        ReadType::One => println!("Random Access Reading"),
+        ReadType::Iter => println!("Iteration Reading"),
+    };
+
     println!(
-        "Running {} read threads and {} write threads",
+        "Running {} read threads and {} write threads{}",
         READ_THREADS,
-        WRITE_THREADS
+        WRITE_THREADS,
+        match WRITE_SLEEP {
+            Some(dur) => format!(", writers sleep for {:?}", dur),
+            None => "".to_string()
+        },
     );
 
     bench::<MyPLLock>().join();
