@@ -6,7 +6,7 @@ extern crate test;
 
 use std::time::{Instant, Duration};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, RwLock};
 use std::cell::RefCell;
 
@@ -16,11 +16,11 @@ use arc_swap::ArcSwap;
 use evmap::{ReadHandle, ReadHandleFactory, WriteHandle};
 use dashmap::DashMap;
 
-const THREADS: usize = 8;
+const THREADS: usize = 5;
 const MAP_SIZE: usize = 10000;
-const BENCH_WRITES: bool = true;
+const BENCH_WRITES: bool = false;
 
-const DURATION: Duration = Duration::from_secs(5);
+const DURATION: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct Foo {
@@ -236,7 +236,7 @@ fn format (n: usize) -> String {
     
     match NumberPrefix::decimal(n as f64) {
         Standalone(n)   => format!("{}", n),
-        Prefixed(prefix, n) => format!("{:.0} {}", n, prefix),
+        Prefixed(prefix, n) => format!("{:.1} {}", n, prefix),
     }
 }
 
@@ -246,14 +246,20 @@ fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
         let map = Map::new();
         let read_count = AtomicUsize::new(0);
         let write_count = AtomicUsize::new(0);
+        let stop = AtomicBool::new(false);
 
         thread::scope(|scope| {
-            let end = Instant::now() + DURATION;
 
             // So that the reference is copied, instead of the map itself, which is not copy
             let map = &map;
             let read_count = &read_count;
             let write_count = &write_count;
+            let stop = &stop;
+
+            scope.spawn(move |_| {
+                std::thread::sleep(DURATION);
+                stop.store(true, Relaxed);
+            });
 
             for thread_i in 0..THREADS {
 
@@ -261,7 +267,7 @@ fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
                 scope.spawn(move |_| {
                     let mut i = (thread_i*MAP_SIZE) / THREADS;
 
-                    while (Instant::now() < end) {
+                    while (!stop.load(Relaxed)) {
                         reader.map(i, |foo| {
                             test::black_box(foo);
                         });
@@ -277,7 +283,7 @@ fn bench <Map> () -> std::thread::JoinHandle<()> where for<'a> Map: Mappy<'a> {
                 scope.spawn(move |_| {
                     let mut i = 0;
 
-                    while (Instant::now() < end) {
+                    while (!stop.load(Relaxed)) {
                         map.set(i, Foo::new(i));
 
                         write_count.fetch_add(1, Relaxed);
@@ -299,16 +305,14 @@ fn main() {
     let start = Instant::now();
     let end = start + DURATION;
 
-    let joins = vec![
-        bench::<MyPLLock>(),
-        bench::<MyRwLock>(),
-        bench::<MyArcSwap>(),
-        bench::<MyEvmap>(),
-        bench::<MyDashMap>(),
-    ];
-
     println!("Running {} read threads and {} write threads", THREADS, if BENCH_WRITES { 1 } else { 0 });
 
-    // Wait for the threads to finish
-    for join in joins { join.join(); }
+    //let joins = vec![
+        bench::<MyPLLock>().join();
+        bench::<MyRwLock>().join();
+        bench::<MyArcSwap>().join();
+        bench::<MyEvmap>().join();
+        bench::<MyDashMap>().join();
+    //];
+
 }
