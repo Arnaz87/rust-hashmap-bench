@@ -346,6 +346,10 @@ where
             let read_count = &read_count;
             let write_count = &write_count;
             let stop = &stop;
+            scope.spawn(move |_| {
+                std::thread::sleep(DURATION);
+                stop.store(true, Relaxed);
+            });
 
             scope.spawn(move |_| {
                 std::thread::sleep(DURATION);
