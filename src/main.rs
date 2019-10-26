@@ -4,6 +4,7 @@
 extern crate test;
 
 mod sharded_lock;
+mod sharded_dashmap;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -18,8 +19,9 @@ use evmap::{ReadHandle, ReadHandleFactory, WriteHandle};
 use parking_lot::Mutex as PLMutex;
 use parking_lot::RwLock as PLLock;
 use crate::sharded_lock::MyShardedLock;
+use crate::sharded_dashmap::MyShardedDashMap;
 
-const READ_THREADS: usize = 10_000;
+const READ_THREADS: usize = 5000;
 const WRITE_THREADS: usize = 1;
 const MAP_SIZE: usize = 10_000;
 
@@ -475,4 +477,5 @@ fn main() {
     bench::<MyMutex>().join();
     bench::<MyPLMutex>().join();
     bench::<MyShardedLock>().join();
+    bench::<MyShardedDashMap>().join();
 }
