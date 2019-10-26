@@ -3,6 +3,8 @@
 
 extern crate test;
 
+mod sharded_lock;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
@@ -15,13 +17,14 @@ use dashmap::DashMap;
 use evmap::{ReadHandle, ReadHandleFactory, WriteHandle};
 use parking_lot::Mutex as PLMutex;
 use parking_lot::RwLock as PLLock;
+use crate::sharded_lock::MyShardedLock;
 
-const READ_THREADS: usize = 10;
+const READ_THREADS: usize = 10_000;
 const WRITE_THREADS: usize = 1;
-const MAP_SIZE: usize = 10000;
+const MAP_SIZE: usize = 10_000;
 
 const DURATION: Duration = Duration::from_secs(5);
-const WRITE_SLEEP: Option<Duration> = None;//Some(Duration::from_secs(1));
+const WRITE_SLEEP: Option<Duration> = Some(Duration::from_secs(1));
 
 enum ReadType { One, Iter }
 const READ_TYPE: ReadType = ReadType::Iter;
@@ -388,20 +391,20 @@ where
                         ReadType::One => {
                             let mut i = (thread_i*MAP_SIZE) / READ_THREADS;
 
-                            while (!stop.load(Relaxed)) {
+                            while !stop.load(Relaxed) {
                                 reader.map_one(i, |foo| {
                                     test::black_box(foo);
                                     read_count.fetch_add(1, Relaxed);
                                 });
 
                                 i += 1;
-                                if (i >= MAP_SIZE) {
+                                if i >= MAP_SIZE {
                                     i = 0;
                                 }
                             }
                         },
                         ReadType::Iter => {
-                            while (!stop.load(Relaxed)) {
+                            while !stop.load(Relaxed) {
                                 reader.map_iter(move |foo| {
                                     test::black_box(foo);
                                     read_count.fetch_add(1, Relaxed);
@@ -416,12 +419,12 @@ where
                 scope.spawn(move |_| {
                     let mut i = (thread_i*MAP_SIZE) / WRITE_THREADS;
 
-                    while (!stop.load(Relaxed)) {
+                    while !stop.load(Relaxed) {
                         map.set(i, Foo::new(i));
 
                         write_count.fetch_add(1, Relaxed);
                         i += 1;
-                        if (i >= MAP_SIZE) {
+                        if i >= MAP_SIZE {
                             i = 0;
                         }
 
@@ -471,4 +474,5 @@ fn main() {
     bench::<MyDashMap>().join();
     bench::<MyMutex>().join();
     bench::<MyPLMutex>().join();
+    bench::<MyShardedLock>().join();
 }
